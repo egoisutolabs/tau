@@ -152,6 +152,26 @@ func ExampleDig() {
 	// unknown
 }
 
+func ExampleDig_struct() {
+	type Address struct {
+		City string `json:"city"`
+	}
+	type User struct {
+		Name      string    `json:"name"`
+		Addresses []Address `json:"addresses"`
+		Manager   *User     `json:"manager"`
+	}
+	user := User{Name: "Ada", Addresses: []Address{{City: "London"}, {City: "Turin"}}}
+
+	// Fields are named by their json tag; a nil pointer on the way is a miss.
+	city, _ := tau.Dig[string](user, "addresses", -1, "city")
+	fmt.Println(city)
+	fmt.Println(tau.DigOr(user, "nobody", "manager", "name"))
+	// Output:
+	// Turin
+	// nobody
+}
+
 func ExampleOrderedMap() {
 	m := tau.NewMap[string, int]().Set("zebra", 1).Set("apple", 2).Set("mango", 3)
 	for key, value := range m.All() {

@@ -60,12 +60,14 @@ func Summary(ctx context.Context, body []byte) (total int, err error) {
   size limit. Every input failure is one `InputError` type, so a handler
   recognises a bad request with a single check. `Field[T]` tells an omitted
   key from an explicit `null`, for PATCH requests. `Dig` reads untyped
-  JSON without a chain of type assertions.
+  JSON, MongoDB documents and structs without a chain of type assertions.
 - **Ordered map and set.** `OrderedMap` and `Set` keep insertion order,
   like their JavaScript namesakes.
 - **One import.** tau wraps [`samber/lo`](https://github.com/samber/lo) and
   [`go-playground/validator`](https://github.com/go-playground/validator),
-  so everyday work needs nothing else.
+  so everyday work needs nothing else. The optional `tau/taubson`
+  sub-package speeds up `Dig` on MongoDB documents; only programs that
+  import it carry the driver's `bson` package.
 
 ## Installation
 
@@ -98,7 +100,7 @@ every function.
 | [Errors](docs/errors.md) | Throwing, catching, context, stacks, meeting ordinary errors |
 | [Concurrency](docs/concurrency.md) | Promises, async functions, task groups, retry policies, batches, the cancellation model |
 | [Lists](docs/lists.md) | Chaining, grouping, what stays a function |
-| [JSON and validation](docs/json-and-validation.md) | Strict parsing, size-limited reading, the input error type, validation tags, PATCH fields, untyped JSON |
+| [JSON and validation](docs/json-and-validation.md) | Strict parsing, size-limited reading, the input error type, validation tags, PATCH fields, untyped JSON, MongoDB documents |
 | [Ordered map and set](docs/collections.md) | `OrderedMap` and `Set` |
 | [Coming from Node.js](docs/coming-from-node.md) | The mapping from JavaScript idioms, and where Go differs |
 

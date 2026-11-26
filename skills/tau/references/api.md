@@ -201,12 +201,23 @@ func (f Field[T]) MarshalJSONTo(enc *jsontext.Encoder) error
 Tag as `json:"name,omitzero" validate:"omitnil,<rules>"` or
 `validate:"required,<rules>"`.
 
-## Untyped JSON
+## Untyped JSON, MongoDB documents, structs
 
 ```go
 func Dig[T any](data any, path ...any) (T, bool)      // string steps are keys, int steps are indexes
 func DigOr[T any](data any, fallback T, path ...any) T
 ```
+
+`data` can be decoded JSON (`map[string]any`, `[]any`), any string-keyed
+map, any slice or array, MongoDB `bson.M` / `bson.A` / `bson.D`, or a
+struct (a string step names a field by `json` tag, else `bson` tag, else Go
+name). A missing key, bad index, nil, or wrong type gives `false`. Numbers
+convert when nothing is lost (`int32`, `int64`, whole `float64` to `int`);
+nothing else converts.
+
+For MongoDB documents add `import _ "github.com/egoisutolabs/tau/taubson"`
+once in the program: it has no functions, and makes `Dig` on the v2
+driver's types about three times faster.
 
 A whole `float64` converts to any integer type asked for.
 

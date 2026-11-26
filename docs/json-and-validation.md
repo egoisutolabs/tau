@@ -136,7 +136,7 @@ it is neither null nor omitted, and its rules are checked. A rule that
 null is not allowed, while omitting is, cannot be written as a tag; put it
 in the type's `Validate()` method with `f.IsNull()`.
 
-## Untyped JSON
+## Untyped JSON, MongoDB documents and structs
 
 For data decoded into `any`, `Dig` replaces a chain of type assertions,
 the way `?.` does in JavaScript:
@@ -146,11 +146,59 @@ city, ok := tau.Dig[string](data, "user", "addresses", 0, "city")
 plan := tau.DigOr(data, "free", "account", "plan") // with a fallback, like ??
 ```
 
-A string step looks up an object key; an int step indexes an array, from
-the end if negative. `Dig` reports false for a missing key, an index out
-of range, a `null`, or a value of the wrong type. JSON numbers decode as
-`float64`; `Dig` converts a whole number to whichever integer type you ask
-for, and refuses one that does not fit.
+A string step looks up a key; an int step indexes a list, from the end if
+negative. `Dig` reports false for a missing key, an index out of range, a
+`null` or nil, or a value of the wrong type.
+
+The same call reads more than decoded JSON:
+
+| Data | A string step | An int step |
+|---|---|---|
+| `map[string]any`, `[]any` (decoded JSON) | looks up the key | indexes |
+| Any map with string keys, any slice or array | looks up the key | indexes |
+| MongoDB `bson.M`, `bson.A` | looks up the key | indexes |
+| MongoDB `bson.D` | finds the pair with that key | returns the pair |
+| A struct, or a pointer to one | names a field | misses |
+
+A struct field answers to its `json` tag name, else its `bson` tag name,
+else its Go name. Embedded fields are found, pointers are followed, a nil
+pointer on the way is a miss, and unexported fields are never returned. A
+`*string` field can be asked for as a `string` or as a `*string`.
+
+```go
+type User struct {
+    Name      string    `json:"name"`
+    Addresses []Address `json:"addresses"`
+}
+city, ok := tau.Dig[string](user, "addresses", -1, "city")
+```
+
+Numbers convert when nothing is lost. JSON gives `float64` for every
+number, and MongoDB gives `int32`, `int64` or `float64` depending on the
+stored value, so `Dig[int]` accepts any of them if the value is whole and
+fits. 9.5 is a miss as an `int`; 3,000,000,000 is a miss as an `int32`.
+Other types are not converted: a `bson.M` asked for as a `map[string]any`
+is a miss, so ask for the type that is there.
+
+### MongoDB speed
+
+Everything except decoded JSON is read by reflection, which costs about
+three times as much: roughly 90 ns for a three-step lookup against 25 ns.
+For MongoDB documents, one import removes the difference:
+
+```go
+import _ "github.com/egoisutolabs/tau/taubson"
+```
+
+It registers a direct path for the types of the official v2 driver
+(`go.mongodb.org/mongo-driver/v2/bson`). The package has no functions; the
+import is all there is to it. It is separate so that programs that do not
+use MongoDB do not carry the driver's `bson` package, about 1.4 MB.
+Documents from the v1 driver are read by reflection either way.
+
+In a loop over many documents, decode into a struct and use its fields
+directly; `Dig` is for reading a few values out of data whose shape you do
+not own.
 
 ## Encoding
 

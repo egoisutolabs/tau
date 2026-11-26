@@ -63,7 +63,11 @@ elements, has to be a function, because a method cannot narrow `T`.
 
 **Dependencies are `lo` and `validator`.** Adding another needs a reason
 that outweighs its cost to every importer; validator alone adds about
-5.5 MB to a binary.
+5.5 MB to a binary. The MongoDB driver's `bson` package is imported only by
+the `taubson` sub-package, never by the root package, so that programs that
+do not use MongoDB do not compile it in. A sub-package reaches the root
+through a hook in `internal/` (see `internal/dighook`), set once from
+`init`.
 
 ## Adding to the API
 
