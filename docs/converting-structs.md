@@ -84,8 +84,14 @@ resp.Total = sum(order.Items)
 | A type with a text form | `string` | `time.Time`, most ID types, enums with `MarshalText` |
 | `string` | A type that reads text | `"2026-11-18T14:00:00Z"` into a `time.Time` |
 
-Embedded structs are filled through their promoted fields. Types that
+An embedded struct in the destination is filled through its promoted
+fields. If it carries a `tau` tag, or the source has a field of the same
+name, it is converted as one field instead. An embedded struct that
+nothing can fill, such as an untagged `time.Time`, is refused. Types that
 contain themselves, such as a tree node, work.
+
+A type's text form is used whether `MarshalText` is declared on the value
+or on the pointer.
 
 Anything else is refused: `int` to `string`, a float to an integer, a
 narrowing number, a struct to a string without a text form. `Convert` does
@@ -103,10 +109,18 @@ that runs a conversion proves its whole field mapping.** It is still a
 run-time check: the compiler does not catch it, so make sure each
 conversion is reached by a test.
 
-The one failure that depends on a value is text: a string that will not
-parse into a `time.Time`, or a `MarshalText` that returns an error. Those
-throw a `*ConvertError` naming the field, with the underlying error
-reachable through `errors.As`.
+Two failures depend on the values, and so are not proved by a test on
+empty data:
+
+- **Text.** A string that will not parse into a `time.Time`, or a
+  `MarshalText` that returns an error. The underlying error is reachable
+  through `errors.As`.
+- **Map keys that collide.** If the key type changes, two different source
+  keys can convert to the same key, for instance when the destination key
+  is a struct with fewer fields. `Convert` throws instead of letting one
+  entry overwrite the other.
+
+Both throw a `*ConvertError` naming the field.
 
 ## Cost
 

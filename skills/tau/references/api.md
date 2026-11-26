@@ -241,7 +241,8 @@ by the caller afterwards). Extra source fields are ignored.
 Converts: nested structs, slices, maps, pointers (nil stays nil), named
 types to their basic kind, numbers that widen, a type with `MarshalText`
 (`time.Time`, IDs) to `string`, and a string into a type with
-`UnmarshalText`. Refuses everything else, including narrowing numbers.
+`UnmarshalText`. Refuses everything else, including narrowing numbers, and
+map keys that would collide after conversion.
 Also works at the top level: `tau.Convert[[]View](rows)`.
 
 ## Ordered map and set

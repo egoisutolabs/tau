@@ -467,3 +467,162 @@ func BenchmarkConvertFlatStruct(b *testing.B) {
 		_ = Convert[convAddressView](row)
 	}
 }
+
+// Finding: two distinct source keys that convert to the same key must not
+// silently overwrite one another.
+func TestConvertRefusesMapKeysThatCollapse(t *testing.T) {
+	type fullKey struct {
+		ID     int
+		Region string
+	}
+	type shortKey struct{ ID int }
+	src := map[fullKey]string{{1, "eu"}: "a", {1, "us"}: "b"}
+	err := Try(func() { Convert[map[shortKey]string](src) })
+	ce, ok := errors.AsType[*ConvertError](err)
+	if !ok || !strings.Contains(ce.Error(), "same key") {
+		t.Fatalf("collapsing keys were accepted: %v", err)
+	}
+	// Distinct after conversion: fine.
+	got := Convert[map[shortKey]string](map[fullKey]string{{1, "eu"}: "a", {2, "eu"}: "b"})
+	if len(got) != 2 || got[shortKey{2}] != "b" {
+		t.Errorf("%v", got)
+	}
+	nested := struct{ M map[fullKey]int }{map[fullKey]int{{1, "eu"}: 1, {1, "us"}: 2}}
+	err = Try(func() { Convert[struct{ M map[shortKey]int }](nested) })
+	if ce, ok := errors.AsType[*ConvertError](err); !ok || ce.Field != "M" {
+		t.Errorf("nested collapse must name the field: %v", err)
+	}
+}
+
+// Finding: an embedded struct in the destination is a field like any other
+// when it carries a tag, and must never be left silently empty.
+func TestConvertEmbeddedDestinationStructs(t *testing.T) {
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	type row struct {
+		CreatedAt time.Time
+		Name      string
+	}
+	type tagged struct {
+		time.Time `tau:"CreatedAt"`
+		Name      string
+	}
+	if got := Convert[tagged](row{at, "Ada"}); !got.Time.Equal(at) || got.Name != "Ada" {
+		t.Errorf("tagged embedded struct: %+v", got)
+	}
+
+	type untagged struct {
+		time.Time
+		Name string
+	}
+	err := Try(func() { Convert[untagged](row{at, "Ada"}) })
+	if ce, ok := errors.AsType[*ConvertError](err); !ok || ce.Field != "Time" {
+		t.Errorf("an embedded struct nothing can fill must be refused: %v", err)
+	}
+	if got := Convert[untagged](struct {
+		Time time.Time
+		Name string
+	}{at, "Ada"}); !got.Time.Equal(at) {
+		t.Errorf("embedded struct matched by its name: %+v", got)
+	}
+
+	type skipped struct {
+		time.Time `tau:"-"`
+		Name      string
+	}
+	if got := Convert[skipped](row{at, "Ada"}); !got.Time.IsZero() || got.Name != "Ada" {
+		t.Errorf("tau:\"-\" on an embedded struct: %+v", got)
+	}
+
+	// A tagged embedded struct is mapped whole; its promoted fields are not
+	// then looked up one by one.
+	type Stamps struct{ CreatedAt, UpdatedAt time.Time }
+	type audit struct{ CreatedAt, UpdatedAt time.Time }
+	type auditedRow struct {
+		Audit audit
+		Name  string
+	}
+	type view struct {
+		Stamps `tau:"Audit"`
+		Name   string
+	}
+	if got := Convert[view](auditedRow{audit{at, at}, "Ada"}); !got.UpdatedAt.Equal(at) {
+		t.Errorf("tagged embedded struct converted from another struct: %+v", got)
+	}
+}
+
+type convPtrText struct{ v string }
+
+func (p *convPtrText) MarshalText() ([]byte, error) { return []byte("text:" + p.v), nil }
+
+// Finding: MarshalText declared on the pointer must be found whether the
+// source holds the pointer or the value.
+func TestConvertPointerReceiverMarshalText(t *testing.T) {
+	type viaPointer struct{ ID *convPtrText }
+	type viaValue struct{ ID convPtrText }
+	type view struct{ ID string }
+	type optionalView struct{ ID *string }
+	if got := Convert[view](viaPointer{&convPtrText{"a"}}); got.ID != "text:a" {
+		t.Errorf("pointer source: %+v", got)
+	}
+	if got := Convert[view](viaValue{convPtrText{"b"}}); got.ID != "text:b" {
+		t.Errorf("value source: %+v", got)
+	}
+	if got := Convert[view](viaPointer{}); got.ID != "" {
+		t.Errorf("nil pointer must give the zero value: %+v", got)
+	}
+	if got := Convert[optionalView](viaPointer{&convPtrText{"c"}}); got.ID == nil || *got.ID != "text:c" {
+		t.Errorf("pointer to pointer: %+v", got)
+	}
+	if got := Convert[optionalView](viaPointer{}); got.ID != nil {
+		t.Errorf("nil pointer must stay nil: %+v", got)
+	}
+	if got := Convert[string](&convPtrText{"d"}); got != "text:d" {
+		t.Errorf("top level: %q", got)
+	}
+}
+
+// Finding: a tag path through a pointer to a pointer must work, not panic.
+func TestConvertTagPathThroughPointers(t *testing.T) {
+	type customer struct{ Email string }
+	type row struct{ Customer **customer }
+	type view struct {
+		Email string `tau:"Customer.Email"`
+	}
+	c := &customer{"ada@example.com"}
+	if got := Convert[view](row{&c}); got.Email != "ada@example.com" {
+		t.Errorf("%+v", got)
+	}
+	var none *customer
+	if got := Convert[view](row{&none}); got.Email != "" {
+		t.Errorf("nil inner pointer: %+v", got)
+	}
+	if got := Convert[view](row{}); got.Email != "" {
+		t.Errorf("nil outer pointer: %+v", got)
+	}
+
+	type inner struct{ Email string }
+	type embeds struct{ *inner }
+	if got := Convert[struct{ Email string }](embeds{}); got.Email != "" {
+		t.Errorf("promoted field behind a nil embedded pointer: %+v", got)
+	}
+	if got := Convert[struct{ Email string }](embeds{&inner{"x"}}); got.Email != "x" {
+		t.Errorf("promoted field behind an embedded pointer: %+v", got)
+	}
+}
+
+// The shallower source field wins a json name, as in Dig.
+func TestConvertShallowestSourceFieldWinsAJSONName(t *testing.T) {
+	type deep struct {
+		Inner string `json:"name"`
+	}
+	type row struct {
+		deep
+		Outer string `json:"name"`
+	}
+	type view struct {
+		FullName string `json:"name"`
+	}
+	if got := Convert[view](row{deep{"nested"}, "direct"}); got.FullName != "direct" {
+		t.Errorf("%+v", got)
+	}
+}

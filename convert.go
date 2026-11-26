@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -30,7 +31,10 @@ import (
 //
 //   - The same type is assigned as it is. Slices and maps of the same type
 //     are shared with the source, not copied.
-//   - Structs, slices, maps and pointers convert element by element. A nil
+//   - Structs, slices, maps and pointers convert element by element. An
+//     embedded struct in the destination is filled through its promoted
+//     fields, or as one field if it is tagged or the source has a field
+//     of its name. A nil
 //     pointer, slice or map stays nil; a nil pointer converted into a
 //     non-pointer field leaves the zero value.
 //   - A named type converts to and from its basic kind (an enum declared as
@@ -43,8 +47,9 @@ import (
 // Convert throws a *ConvertError. Whether two types can be converted is
 // decided from the types alone, once, so a wrong mapping throws on every
 // call whatever the values are: one test that runs a conversion proves its
-// field mapping. Only reading a string into a TextUnmarshaler can fail
-// because of a value.
+// field mapping. Two failures depend on the values instead: text that will
+// not convert (a string that is not a time), and two map keys that convert
+// to the same key.
 //
 // Convert works by reflection and costs several times a hand-written
 // mapper (about 1 µs for a response of twenty fields). Use it to build
@@ -146,6 +151,26 @@ func (b *convertBuilder) build(st, dt reflect.Type, path string) convertStep {
 
 func (b *convertBuilder) buildNew(st, dt reflect.Type, path string) convertStep {
 	switch {
+	case dt.Kind() == reflect.String && st.Implements(convertTextMarshaler):
+		// An ID, a time, an enum: anything that knows its own text form.
+		// This comes before the pointer cases, because the method may be
+		// declared on the pointer.
+		nilable := st.Kind() == reflect.Pointer || st.Kind() == reflect.Interface
+		return func(dst, src reflect.Value) {
+			if nilable && src.IsNil() {
+				dst.SetZero()
+				return
+			}
+			b.marshalText(dst, src, path)
+		}
+	case dt.Kind() == reflect.String && st.Kind() != reflect.Pointer && reflect.PointerTo(st).Implements(convertTextMarshaler):
+		// The method is on the pointer and the source holds a value, which
+		// may not be addressable: call it on a copy.
+		return func(dst, src reflect.Value) {
+			p := reflect.New(st)
+			p.Elem().Set(src)
+			b.marshalText(dst, p, path)
+		}
 	case dt.Kind() == reflect.Pointer && st.Kind() == reflect.Pointer:
 		inner := b.build(st.Elem(), dt.Elem(), path)
 		return func(dst, src reflect.Value) {
@@ -173,15 +198,6 @@ func (b *convertBuilder) buildNew(st, dt reflect.Type, path string) convertStep 
 			}
 			inner(dst, src.Elem())
 		}
-	case dt.Kind() == reflect.String && st.Implements(convertTextMarshaler):
-		// An ID, a time, an enum: anything that knows its own text form.
-		return func(dst, src reflect.Value) {
-			text, err := src.Interface().(encoding.TextMarshaler).MarshalText()
-			if err != nil {
-				b.fail(path, err)
-			}
-			dst.SetString(string(text))
-		}
 	case st.Kind() == reflect.String && reflect.PointerTo(dt).Implements(convertTextUnmarshaler):
 		return func(dst, src reflect.Value) {
 			if err := dst.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(src.String())); err != nil {
@@ -206,6 +222,7 @@ func (b *convertBuilder) buildNew(st, dt reflect.Type, path string) convertStep 
 	case st.Kind() == reflect.Map && dt.Kind() == reflect.Map:
 		keys := b.build(st.Key(), dt.Key(), path+"[key]")
 		values := b.build(st.Elem(), dt.Elem(), path+"[]")
+		sameKeys := st.Key() == dt.Key()
 		return func(dst, src reflect.Value) {
 			if src.IsNil() {
 				dst.SetZero()
@@ -215,6 +232,12 @@ func (b *convertBuilder) buildNew(st, dt reflect.Type, path string) convertStep 
 			for iter := src.MapRange(); iter.Next(); {
 				k, v := reflect.New(dt.Key()).Elem(), reflect.New(dt.Elem()).Elem()
 				keys(k, iter.Key())
+				// Two source keys can convert to one, for instance when
+				// the destination key type has fewer fields. Overwriting
+				// would lose an entry without a word.
+				if !sameKeys && out.MapIndex(k).IsValid() {
+					b.failf(path, "two keys convert to the same key %v, so an entry would be lost", k)
+				}
 				values(v, iter.Value())
 				out.SetMapIndex(k, v)
 			}
@@ -227,6 +250,14 @@ func (b *convertBuilder) buildNew(st, dt reflect.Type, path string) convertStep 
 	}
 	b.failf(path, "no conversion from %s to %s", st, dt)
 	return nil
+}
+
+func (b *convertBuilder) marshalText(dst, src reflect.Value, path string) {
+	text, err := src.Interface().(encoding.TextMarshaler).MarshalText()
+	if err != nil {
+		b.fail(path, err)
+	}
+	dst.SetString(string(text))
 }
 
 // convertSafeScalar reports whether every value of st is exactly representable as
@@ -265,8 +296,9 @@ func (b *convertBuilder) structs(st, dt reflect.Type, path string) convertStep {
 			continue
 		}
 		byName[f.Name] = f.Index
+		// The shallowest field wins a json name, as in encoding/json.
 		if name := convertJSONName(f); name != "" {
-			if _, taken := byJSON[name]; !taken {
+			if seen, taken := byJSON[name]; !taken || len(f.Index) < len(seen) {
 				byJSON[name] = f.Index
 			}
 		}
@@ -276,15 +308,33 @@ func (b *convertBuilder) structs(st, dt reflect.Type, path string) convertStep {
 		run      convertStep
 	}
 	var steps []fieldStep
+	var whole [][]int // embedded destination structs handled as one field
+fields:
 	for _, f := range reflect.VisibleFields(dt) {
-		if !f.IsExported() || (f.Anonymous && f.Type.Kind() == reflect.Struct) {
-			continue // an embedded struct is filled through its promoted fields
+		if !f.IsExported() {
+			continue
+		}
+		for _, prefix := range whole {
+			if len(f.Index) > len(prefix) && slices.Equal(f.Index[:len(prefix)], prefix) {
+				continue fields // promoted from a struct already dealt with
+			}
 		}
 		at := path + "." + f.Name
 		if (f.Anonymous && f.Type.Kind() == reflect.Pointer) || convertThroughPointer(dt, f.Index) {
 			b.failf(at, "embedded pointers in the destination are not supported")
 		}
 		tag := f.Tag.Get("tau")
+		if f.Anonymous && f.Type.Kind() == reflect.Struct {
+			if tag == "" && byName[f.Name] == nil {
+				// Filled through its promoted fields, which come next. If
+				// it has none, nothing would fill it.
+				if !convertHasExportedField(f.Type) {
+					b.failf(at, "%s has no field for it and it has no fields of its own to match; tag it with a source, or `tau:\"-\"`", st)
+				}
+				continue
+			}
+			whole = append(whole, f.Index)
+		}
 		if tag == "-" {
 			continue
 		}
@@ -304,11 +354,35 @@ func (b *convertBuilder) structs(st, dt reflect.Type, path string) convertStep {
 	return func(dst, src reflect.Value) {
 		for _, s := range steps {
 			// A nil pointer on the way to the source leaves the zero value.
-			if v, err := src.FieldByIndexErr(s.src); err == nil {
+			if v, ok := convertSourceField(src, s.src); ok {
 				s.run(dst.FieldByIndex(s.dst), v)
 			}
 		}
 	}
+}
+
+// convertSourceField follows index from v through any depth of pointers,
+// matching convertTypeAt. It reports false at a nil pointer.
+func convertSourceField(v reflect.Value, index []int) (reflect.Value, bool) {
+	for _, i := range index {
+		for v.Kind() == reflect.Pointer {
+			if v.IsNil() {
+				return v, false
+			}
+			v = v.Elem()
+		}
+		v = v.Field(i)
+	}
+	return v, true
+}
+
+func convertHasExportedField(t reflect.Type) bool {
+	for _, f := range reflect.VisibleFields(t) {
+		if f.IsExported() {
+			return true
+		}
+	}
+	return false
 }
 
 // sourcePath resolves a `tau:"Customer.Email"` tag to a field index path,
