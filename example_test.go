@@ -172,6 +172,39 @@ func ExampleDig_struct() {
 	// nobody
 }
 
+func ExampleConvert() {
+	type CustomerRow struct {
+		Email        string
+		PasswordHash string
+	}
+	type OrderRow struct {
+		ID       int32
+		Customer CustomerRow
+		PlacedAt time.Time
+	}
+	type OrderResponse struct {
+		ID       int    `json:"id"`
+		Email    string `json:"email" tau:"Customer.Email"`
+		PlacedAt string `json:"placed_at"`
+		Summary  string `json:"summary" tau:"-"`
+	}
+	row := OrderRow{ID: 7, Customer: CustomerRow{"ada@example.com", "secret"}, PlacedAt: time.Date(2026, 11, 18, 14, 0, 0, 0, time.UTC)}
+
+	resp := tau.Convert[OrderResponse](row)
+	resp.Summary = fmt.Sprintf("order %d", resp.ID)
+	fmt.Printf("%+v\n", resp)
+
+	// A field with nothing to match is refused, not left empty.
+	type Renamed struct{ Mail string }
+	err := tau.Try(func() { tau.Convert[Renamed](row.Customer) })
+	if ce, ok := errors.AsType[*tau.ConvertError](err); ok {
+		fmt.Println("refused:", ce.Field)
+	}
+	// Output:
+	// {ID:7 Email:ada@example.com PlacedAt:2026-11-18T14:00:00Z Summary:order 7}
+	// refused: Mail
+}
+
 func ExampleOrderedMap() {
 	m := tau.NewMap[string, int]().Set("zebra", 1).Set("apple", 2).Set("mango", 3)
 	for key, value := range m.All() {

@@ -19,6 +19,12 @@ uses [Semantic Versioning](https://semver.org/).
   driver's types as fast as on decoded JSON. Only programs that import it
   compile in the driver's `bson` package.
 
+- `Convert`, which builds a value of one struct type from another by
+  matching fields by Go name or json name, with `tau:"Path.To.Field"` and
+  `tau:"-"` tags for the rest. A destination field with no source is
+  refused, not left empty. It throws `*ConvertError`, which names the
+  field.
+
 ### Changed
 
 - `Dig` used to report false for every one of the types above; it now

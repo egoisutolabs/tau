@@ -34,6 +34,8 @@ its own errors with specific messages shrinks very little.
 | --- | --- |
 | A thrown error | a panic and a stack capture, about 1 to 2 µs |
 | An `Async` call | a goroutine, about 0.5 µs and 6 allocations |
+| A `Convert` call | reflection: about 1 µs for a nested response of twenty fields, against 0.2 µs written by hand |
+| A `Dig` lookup outside decoded JSON | reflection: about 90 ns for three steps, against 25 ns (see the `taubson` package for MongoDB) |
 | Importing tau | about 6 MB of binary size, nearly all from the validator and the `golang.org/x` modules it needs |
 
 In the rules-engine experiment the success path ran at the same speed, but
