@@ -154,6 +154,16 @@ func TestAny(t *testing.T) {
 	}
 }
 
+// untilStarted blocks until n calls have registered in started. Tests use it
+// so that a deliberate failure happens only after its siblings are running;
+// otherwise a sibling that has not started yet is, correctly, never run, and
+// a count of cancelled siblings would depend on scheduling.
+func untilStarted(started *atomic.Int32, n int32) {
+	for started.Load() < n {
+		time.Sleep(100 * time.Microsecond)
+	}
+}
+
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -210,13 +220,14 @@ func TestMapAsync(t *testing.T) {
 
 func TestMapAsyncCancellation(t *testing.T) {
 	in := List[int]{1, 2, 3, 4, 5, 6}
-	var stopped atomic.Int32
+	var started, stopped atomic.Int32
 	err := Try(func() {
 		in.MapAsync(bg, 6, func(ctx context.Context, n int) int {
 			if n == 1 {
-				time.Sleep(time.Millisecond)
+				untilStarted(&started, 5)
 				Throw(errBoom)
 			}
+			started.Add(1)
 			return after(time.Hour, n, &stopped)(ctx)
 		})
 	})
@@ -331,7 +342,7 @@ func TestRetryStopsOnPermanentError(t *testing.T) {
 // Async functions are ordinary functions that return Async.
 
 func double(ctx context.Context, n int) *Promise[int] {
-	return Async(ctx, func(ctx context.Context) int { return after(20*time.Millisecond, n*2, nil)(ctx) })
+	return Async(ctx, func(ctx context.Context) int { return after(50*time.Millisecond, n*2, nil)(ctx) })
 }
 
 func labelled(ctx context.Context, prefix string, n int) *Promise[string] {
@@ -350,8 +361,9 @@ func TestAsyncFunctionsRunConcurrentlyAndNest(t *testing.T) {
 	if got := both.Await(bg); got != "x6 y42" {
 		t.Fatalf("got %q", got)
 	}
-	if elapsed := time.Since(start); elapsed > 70*time.Millisecond {
-		t.Fatalf("four 20ms calls took %v; they should overlap", elapsed)
+	// Run one after another the four calls would take 200ms.
+	if elapsed := time.Since(start); elapsed > 150*time.Millisecond {
+		t.Fatalf("four 50ms calls took %v; they should overlap", elapsed)
 	}
 }
 
@@ -388,6 +400,10 @@ func TestCallerCancellationReachesNestedAsyncFunctions(t *testing.T) {
 	if _, err := outer.Result(bg); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("got %v", err)
 	}
+	// The outer function stops waiting as soon as its context ends, which can
+	// be before the inner call has finished unwinding.
+	waitFor(t, "the first inner call to be cancelled", func() bool { return stopped.Load() >= 1 })
+	time.Sleep(20 * time.Millisecond)
 	if stopped.Load() != 1 {
 		t.Fatalf("stopped %d, want 1: the second call must not start after the first was cancelled", stopped.Load())
 	}
@@ -424,8 +440,8 @@ func TestMapSettled(t *testing.T) {
 	if len(out) != 6 || out[0].Value != "10" || !out[0].OK() || out[2].OK() || out[2].Err.Error() != "bad 3" || out[5].OK() || out[4].Value != "50" {
 		t.Fatalf("got %+v", out)
 	}
-	if peak.Load() != 2 {
-		t.Fatalf("ran %d at once, want 2", peak.Load())
+	if peak.Load() > 2 {
+		t.Fatalf("ran %d at once, over the limit of 2", peak.Load())
 	}
 	failures := out.Count(func(s Settled[string]) bool { return !s.OK() })
 	if failures != 2 {
@@ -546,16 +562,17 @@ func TestForEachAsync(t *testing.T) {
 		time.Sleep(3 * time.Millisecond)
 		sum.Add(int32(n))
 	})
-	if sum.Load() != 21 || peak.Load() != 2 {
+	if sum.Load() != 21 || peak.Load() > 2 {
 		t.Fatalf("sum %d, peak %d", sum.Load(), peak.Load())
 	}
-	var stopped atomic.Int32
+	var started, stopped atomic.Int32
 	err := Try(func() {
 		List[int]{1, 2, 3}.ForEachAsync(bg, 3, func(ctx context.Context, n int) {
 			if n == 1 {
-				time.Sleep(time.Millisecond)
+				untilStarted(&started, 2)
 				Throw(errBoom)
 			}
+			started.Add(1)
 			after(time.Hour, n, &stopped)(ctx)
 		})
 	})

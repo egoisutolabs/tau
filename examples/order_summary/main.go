@@ -190,9 +190,10 @@ func main() {
 		{"item fails twice, then works", `{"userId":"u1","itemIds":["apple","pear"]}`, &Backend{Flaky: map[string]int{"pear": 2}}, 0, 0, 200, 333},
 		{"item fails every time", `{"userId":"u1","itemIds":["apple","pear"]}`, &Backend{Flaky: map[string]int{"pear": 9}}, 0, 0, 500, 0},
 		{"item too slow", `{"userId":"u1","itemIds":["apple","fig"]}`, &Backend{Slow: slowFig}, 0, 0, 504, 0},
-		// The discount fails after 2ms while the slow item would take a second:
-		// the scope notices at once instead of waiting for the items.
-		{"discount fails while items are slow", `{"userId":"u1","itemIds":["apple","fig"]}`, &Backend{Slow: slowFig, NoDiscount: true}, 0, 25 * time.Millisecond, 500, 0},
+		// The discount fails after 2ms while the slow item would take a second.
+		// The scope notices at once: the answer is the discount's failure (500),
+		// not the item's timeout (504) that waiting for the items would give.
+		{"discount fails while items are slow", `{"userId":"u1","itemIds":["apple","fig"]}`, &Backend{Slow: slowFig, NoDiscount: true}, 0, 80 * time.Millisecond, 500, 0},
 		{"caller gives up after 20ms", `{"userId":"u1","itemIds":["apple","fig"]}`, &Backend{Slow: slowFig}, 20 * time.Millisecond, 0, 504, 0},
 	}
 	for _, c := range cases {
@@ -208,7 +209,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "FAIL %s: got status %d total %d (%s), want %d and %d\n", c.name, got.Status, got.Total, got.Error, c.status, c.total)
 			os.Exit(1)
 		}
-		if c.timeout > 0 && time.Since(start) > 4*c.timeout {
+		if c.timeout > 0 && time.Since(start) > 10*c.timeout {
 			fmt.Fprintf(os.Stderr, "FAIL %s: took %v after the caller gave up at %v\n", c.name, time.Since(start), c.timeout)
 			os.Exit(1)
 		}

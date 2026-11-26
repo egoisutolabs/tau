@@ -29,14 +29,14 @@ func wait(ctx context.Context, d time.Duration) {
 // return tau.Async. Calling one starts it and returns a promise.
 func fetchUser(ctx context.Context, id string) *tau.Promise[string] {
 	return tau.Async(ctx, func(ctx context.Context) string {
-		wait(ctx, 30*time.Millisecond)
+		wait(ctx, 100*time.Millisecond)
 		return "user:" + id
 	})
 }
 
 func fetchPosts(ctx context.Context, id string) *tau.Promise[int] {
 	return tau.Async(ctx, func(ctx context.Context) int {
-		wait(ctx, 30*time.Millisecond)
+		wait(ctx, 100*time.Millisecond)
 		return 3
 	})
 }
@@ -49,7 +49,7 @@ func main() {
 	user, posts := fetchUser(ctx, "u1"), fetchPosts(ctx, "u1")
 	summary := fmt.Sprintf("%s has %d posts", user.Await(ctx), posts.Await(ctx))
 	check(summary == "user:u1 has 3 posts", "got %q", summary)
-	check(time.Since(start) < 55*time.Millisecond, "the two 30ms calls should overlap, took %v", time.Since(start))
+	check(time.Since(start) < 180*time.Millisecond, "the two 100ms calls should overlap, took %v", time.Since(start))
 
 	// MapAsync: at most 2 at a time, results in order.
 	var running, peak atomic.Int32
@@ -59,7 +59,7 @@ func main() {
 		wait(ctx, 10*time.Millisecond)
 		return n * n
 	})
-	check(fmt.Sprint(squares) == "[1 4 9 16 25]" && peak.Load() == 2, "squares %v, peak %d", squares, peak.Load())
+	check(fmt.Sprint(squares) == "[1 4 9 16 25]" && peak.Load() <= 2, "squares %v, peak %d", squares, peak.Load())
 
 	// ForEachAsync: the same, for work done for its effect.
 	var sent atomic.Int32

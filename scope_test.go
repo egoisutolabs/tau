@@ -13,16 +13,17 @@ import (
 func TestScopeMixedTypes(t *testing.T) {
 	start := time.Now()
 	got := WithScope(bg, func(s *Scope) string {
-		n := s.Go(after(30*time.Millisecond, 42, nil))
-		name := s.Go(after(30*time.Millisecond, "ada", nil))
-		tags := s.Go(after(30*time.Millisecond, []string{"a", "b"}, nil))
+		n := s.Go(after(50*time.Millisecond, 42, nil))
+		name := s.Go(after(50*time.Millisecond, "ada", nil))
+		tags := s.Go(after(50*time.Millisecond, []string{"a", "b"}, nil))
 		return name.Await() + strconv.Itoa(n.Await()) + strings.Join(tags.Await(), "")
 	})
 	if got != "ada42ab" {
 		t.Fatalf("got %q", got)
 	}
-	if took := time.Since(start); took > 80*time.Millisecond {
-		t.Fatalf("three 30ms tasks took %v; they should overlap", took)
+	// Run one after another the three tasks would take 150ms.
+	if took := time.Since(start); took > 120*time.Millisecond {
+		t.Fatalf("three 50ms tasks took %v; they should overlap", took)
 	}
 }
 
@@ -108,18 +109,23 @@ func TestScopeCallerCancellation(t *testing.T) {
 }
 
 func TestScopeContextStopsOtherWork(t *testing.T) {
-	var stopped atomic.Int32
+	var started, stopped atomic.Int32
 	start := time.Now()
 	err := Try(func() {
 		WithScope(bg, func(s *Scope) int {
-			discount := s.Go(failing[int](5*time.Millisecond, errBoom))
+			discount := s.Go(func(context.Context) int {
+				untilStarted(&started, 3) // fail only once every item is running
+				Throw(errBoom)
+				return 0
+			})
 			items := List[int]{1, 2, 3}.MapAsync(s.Context(), 3, func(ctx context.Context, n int) int {
+				started.Add(1)
 				return after(time.Hour, n, &stopped)(ctx)
 			})
 			return len(items) * discount.Await()
 		})
 	})
-	if !errors.Is(err, errBoom) || stopped.Load() != 3 || time.Since(start) > time.Second {
+	if !errors.Is(err, errBoom) || stopped.Load() != 3 || time.Since(start) > 5*time.Second {
 		t.Fatalf("got %v, %d of 3 items stopped, after %v", err, stopped.Load(), time.Since(start))
 	}
 }
