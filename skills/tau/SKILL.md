@@ -185,7 +185,12 @@ cfg := tau.ParseJSON[Config](data)         // bytes already in hand
   `omitzero` so an omitted field is left out when encoding, and `omitnil`
   (or `required`) **first** in `validate`, since a bare rule fails for an
   omitted field. Apply it with `profile.Bio = req.Bio.OrElse(profile.Bio)`.
-- `tau.Dig[T](data, "user", "addresses", 0, "city")` reads untyped JSON.
+- `tau.Dig[T](data, "user", "addresses", 0, "city")` reads untyped JSON,
+  MongoDB documents (`bson.M`, `bson.D`, `bson.A`) and structs (fields by
+  `json` tag, then `bson` tag, then Go name). Use it for a few values from
+  data whose shape you do not own; in a loop over many documents decode
+  into a struct instead. In a program that reads MongoDB documents with
+  `Dig`, add `import _ "github.com/egoisutolabs/tau/taubson"` once.
 
 ## Small helpers
 

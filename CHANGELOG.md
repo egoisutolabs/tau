@@ -6,6 +6,25 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `Dig` and `DigOr` now read MongoDB documents (`bson.M`, `bson.A`,
+  `bson.D`, from either driver version), any map with string keys, any
+  slice or array, and structs. A struct field is named by its `json` tag,
+  else its `bson` tag, else its Go name.
+- `Dig` converts between numeric types when nothing is lost, so `Dig[int]`
+  accepts the `int32` and `int64` values MongoDB returns.
+- The `taubson` sub-package. Importing it for its side effect
+  (`import _ "github.com/egoisutolabs/tau/taubson"`) makes `Dig` on the v2
+  driver's types as fast as on decoded JSON. Only programs that import it
+  compile in the driver's `bson` package.
+
+### Changed
+
+- `Dig` used to report false for every one of the types above; it now
+  finds the value. Lookups on decoded JSON behave as before, with one
+  addition: an integer value can be asked for as a float.
+
 ## [0.1.0] - 2026-11-26
 
 The first release.

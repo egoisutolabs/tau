@@ -9,6 +9,9 @@ go get github.com/egoisutolabs/tau
 Go 1.27 or newer is required: tau uses generic methods and
 `encoding/json/v2`, both new in that release. There is nothing else to
 install. tau brings in `samber/lo` and `go-playground/validator` itself.
+If you read MongoDB documents with `tau.Dig`, also add
+`import _ "github.com/egoisutolabs/tau/taubson"`, which makes those
+lookups faster (see [JSON and validation](json-and-validation.md)).
 
 ## A first function
 

@@ -60,3 +60,212 @@ func TestDig(t *testing.T) {
 		t.Fatalf("got %d, %v", v, ok)
 	}
 }
+
+// The shapes of MongoDB's bson.M, bson.A, bson.E and bson.D, declared here so
+// the root package is tested without importing the driver. The driver's own
+// types are tested in the taubson package.
+type (
+	digDoc   map[string]any
+	digList  []any
+	digEntry struct {
+		Key   string
+		Value any
+	}
+	digPairList []digEntry
+)
+
+type digAddress struct {
+	City string  `json:"city" bson:"town"`
+	Zip  *string `json:"zip,omitempty"`
+}
+
+type digAudit struct {
+	Version int32 `bson:"v"`
+}
+
+type digUser struct {
+	ID        string         `json:"id" bson:"_id"`
+	Name      string         `json:"name"`
+	Addresses []digAddress   `json:"addresses"`
+	Meta      map[string]any `json:"meta"`
+	Manager   *digUser       `json:"manager"`
+	Hidden    string         `json:"-"`
+	Nickname  string
+	digAudit
+	*digExtra
+	secret string
+}
+
+type digExtra struct{ Note string }
+
+// expectDig checks one lookup; want is ignored when the lookup should miss.
+func expectDig[T comparable](t *testing.T, label string, data any, want T, wantOK bool, path ...any) {
+	t.Helper()
+	got, ok := Dig[T](data, path...)
+	if ok != wantOK || (ok && got != want) {
+		t.Errorf("%s: got (%v, %v), want (%v, %v)", label, got, ok, want, wantOK)
+	}
+}
+
+func TestDigNamedDocumentTypes(t *testing.T) {
+	data := digDoc{
+		"name": "Ada",
+		"age":  int32(36),
+		"addresses": digList{
+			digPairList{{"city", "London"}},
+			digPairList{{"city", "Turin"}, {"floor", int64(3)}},
+		},
+		"manager": nil,
+	}
+	expectDig(t, "named map", data, "Ada", true, "name")
+	expectDig(t, "named list, pairs", data, "Turin", true, "addresses", -1, "city")
+	expectDig(t, "pairs, later key", data, 3, true, "addresses", 1, "floor")
+	expectDig(t, "pairs, missing key", data, "", false, "addresses", 0, "floor")
+	expectDig(t, "index into pairs is the pair", data, digEntry{"city", "London"}, true, "addresses", 0, 0)
+	expectDig(t, "nil value", data, "", false, "manager", "name")
+	expectDig(t, "missing key", data, "", false, "email")
+	expectDig(t, "index out of range", data, "", false, "addresses", 2, "city")
+	expectDig(t, "key on a list", data, "", false, "addresses", "city")
+	expectDig(t, "index on a map", data, "", false, 0)
+
+	top := digPairList{{"user", data}}
+	expectDig(t, "pairs at the top", top, "Ada", true, "user", "name")
+	expectDig(t, "pointer to a document", &data, "Ada", true, "name")
+	expectDig(t, "the document itself", data, int32(36), true, "age")
+}
+
+func TestDigTypedMapsAndSlices(t *testing.T) {
+	type label string
+	expectDig(t, "map[string]string", map[string]string{"a": "b"}, "b", true, "a")
+	expectDig(t, "map[string][]int", map[string][]int{"n": {1, 2, 3}}, 3, true, "n", -1)
+	expectDig(t, "named key type", map[label]int{"a": 1}, 1, true, "a")
+	expectDig(t, "array", [2]string{"x", "y"}, "y", true, 1)
+	expectDig(t, "int-keyed map", map[int]string{1: "b"}, "", false, "1")
+	expectDig(t, "nil map", map[string]string(nil), "", false, "a")
+	expectDig(t, "nil data", nil, "", false, "a")
+	expectDig(t, "slice of non-pairs", []digAddress{{City: "x"}}, "", false, "city")
+	var none *digUser
+	expectDig(t, "nil pointer", none, "", false, "name")
+}
+
+func TestDigStructs(t *testing.T) {
+	zip := "10121"
+	user := digUser{
+		ID: "u1", Name: "Ada", Nickname: "countess", Hidden: "h", secret: "s",
+		Addresses: []digAddress{{City: "London"}, {City: "Turin", Zip: &zip}},
+		Meta:      map[string]any{"score": 9.5, "tags": []string{"a", "b"}},
+		digAudit:  digAudit{Version: 7},
+	}
+	expectDig(t, "json tag", user, "Ada", true, "name")
+	expectDig(t, "json tag wins", user, "u1", true, "id")
+	expectDig(t, "bson tag", user, "u1", true, "_id")
+	expectDig(t, "bson tag on a nested struct", user, "London", true, "addresses", 0, "town")
+	expectDig(t, "Go name", user, "countess", true, "Nickname")
+	expectDig(t, "Go name of a tagged field", user, "Ada", true, "Name")
+	expectDig(t, "Go name of a json:\"-\" field", user, "h", true, "Hidden")
+	expectDig(t, "pointer to struct", &user, "Ada", true, "name")
+	expectDig(t, "typed slice", user, "Turin", true, "addresses", -1, "city")
+	expectDig(t, "pointer field as its value", user, "10121", true, "addresses", 1, "zip")
+	expectDig(t, "pointer field as a pointer", user, &zip, true, "addresses", 1, "zip")
+	expectDig(t, "nil pointer field", user, "", false, "addresses", 0, "zip")
+	expectDig(t, "through a nil pointer", user, "", false, "manager", "name")
+	expectDig(t, "embedded by bson tag", user, 7, true, "v")
+	expectDig(t, "embedded by Go name", user, int32(7), true, "Version")
+	expectDig(t, "through a nil embedded pointer", user, "", false, "Note")
+	expectDig(t, "map inside a struct", user, 9.5, true, "meta", "score")
+	expectDig(t, "typed slice inside a map", user, "b", true, "meta", "tags", 1)
+	expectDig(t, "unexported field", user, "", false, "secret")
+	expectDig(t, "unknown field", user, "", false, "email")
+	expectDig(t, "index on a struct", user, "", false, 0)
+	expectDig(t, "a whole struct", user, digAddress{City: "London"}, true, "addresses", 0)
+
+	user.digExtra = &digExtra{Note: "n"}
+	expectDig(t, "through an embedded pointer", user, "n", true, "Note")
+	if DigOr(user, "none", "manager", "name") != "none" {
+		t.Error("DigOr on a struct ignored the fallback")
+	}
+}
+
+func TestDigNumbersConvertOnlyWhenExact(t *testing.T) {
+	data := digDoc{
+		"i32": int32(36), "i64": int64(3_000_000_000), "neg": int64(-2), "u8": uint8(200),
+		"u64": uint64(1 << 63), "f": 9.5, "f32": float32(0.5), "whole": 4.0,
+		"huge": int64(1<<53 + 1), "tenth": 0.1, "str": "7", "yes": true,
+	}
+	type userID int64
+	expectDig(t, "int32 as int", data, 36, true, "i32")
+	expectDig(t, "int32 as a named int", data, userID(36), true, "i32")
+	expectDig(t, "int64 as int", data, 3_000_000_000, true, "i64")
+	expectDig(t, "int64 too big for int32", data, int32(0), false, "i64")
+	expectDig(t, "negative as uint", data, uint(0), false, "neg")
+	expectDig(t, "negative as int8", data, int8(-2), true, "neg")
+	expectDig(t, "uint8 as int", data, 200, true, "u8")
+	expectDig(t, "uint8 too big for int8", data, int8(0), false, "u8")
+	expectDig(t, "uint64 too big for int64", data, int64(0), false, "u64")
+	expectDig(t, "uint64 as uint64", data, uint64(1<<63), true, "u64")
+	expectDig(t, "int as float64", data, 36.0, true, "i32")
+	expectDig(t, "uint as float32", data, float32(200), true, "u8")
+	expectDig(t, "int too big to be an exact float64", data, 0.0, false, "huge")
+	expectDig(t, "fraction as int", data, 0, false, "f")
+	expectDig(t, "whole float as int", data, 4, true, "whole")
+	expectDig(t, "float32 as float64", data, 0.5, true, "f32")
+	expectDig(t, "float64 as float32, exact", data, float32(9.5), true, "f")
+	expectDig(t, "float64 as float32, inexact", data, float32(0), false, "tenth")
+	expectDig(t, "string as int", data, 0, false, "str")
+	expectDig(t, "bool as int", data, 0, false, "yes")
+	expectDig(t, "int as string", data, "", false, "i32")
+}
+
+func TestDigAsInterfaceType(t *testing.T) {
+	user := digUser{Name: "Ada", Addresses: []digAddress{{City: "London"}}}
+	if v, ok := Dig[any](user, "addresses", 0, "city"); !ok || v != "London" {
+		t.Errorf("Dig[any] on a struct field: got (%v, %v)", v, ok)
+	}
+	if _, ok := Dig[error](user, "name"); ok {
+		t.Error("a string was returned as an error")
+	}
+	if _, ok := Dig[any](digDoc{"a": nil}, "a"); ok {
+		t.Error("a nil was reported as found")
+	}
+}
+
+func TestDigConcurrentFirstUseOfAType(t *testing.T) {
+	type fresh struct {
+		A struct{ B []digEntry }
+	}
+	data := fresh{}
+	data.A.B = []digEntry{{"k", 1}}
+	done := make(chan bool)
+	for range 8 {
+		go func() {
+			v, ok := Dig[int](data, "A", "B", "k")
+			done <- ok && v == 1
+		}()
+	}
+	for range 8 {
+		if !<-done {
+			t.Error("concurrent Dig missed")
+		}
+	}
+}
+
+func BenchmarkDigJSON(b *testing.B) {
+	var data any
+	if err := json.Unmarshal([]byte(`{"addresses":[{"city":"London"},{"city":"Turin"}]}`), &data); err != nil {
+		b.Fatal(err)
+	}
+	for b.Loop() {
+		if _, ok := Dig[string](data, "addresses", 1, "city"); !ok {
+			b.Fatal("miss")
+		}
+	}
+}
+
+func BenchmarkDigStruct(b *testing.B) {
+	data := &digUser{Addresses: []digAddress{{City: "London"}, {City: "Turin"}}}
+	for b.Loop() {
+		if _, ok := Dig[string](data, "addresses", 1, "city"); !ok {
+			b.Fatal("miss")
+		}
+	}
+}

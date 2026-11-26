@@ -5,6 +5,7 @@ go 1.27
 require (
 	github.com/go-playground/validator/v10 v10.30.6
 	github.com/samber/lo v1.53.0
+	go.mongodb.org/mongo-driver/v2 v2.10.1
 )
 
 require (

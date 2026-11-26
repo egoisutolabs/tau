@@ -40,7 +40,8 @@
 // applies `validate` struct tags through go-playground/validator; ReadJSON
 // does the same from a reader with a size limit, and both throw an
 // *InputError for anything that is the input's fault. Field tells an omitted
-// key from an explicit null. Dig reads from untyped JSON. OrderedMap and Set keep insertion order.
+// key from an explicit null. Dig reads from untyped JSON, MongoDB documents
+// and structs. OrderedMap and Set keep insertion order.
 //
 // # When to use it
 //
