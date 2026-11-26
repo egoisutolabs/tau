@@ -215,6 +215,10 @@ func digFieldsOf(t reflect.Type) map[string][]int {
 	}
 	names := map[string][]int{}
 	for _, tag := range []string{"json", "bson", ""} {
+		// VisibleFields lists an embedded struct's fields straight after
+		// it, so a deeper field can come before a shallower one with the
+		// same tag name. The shallower one must win.
+		found := map[string][]int{}
 		for _, f := range reflect.VisibleFields(t) {
 			if !f.IsExported() {
 				continue
@@ -226,8 +230,13 @@ func digFieldsOf(t reflect.Type) map[string][]int {
 					continue
 				}
 			}
+			if seen, taken := found[name]; !taken || len(f.Index) < len(seen) {
+				found[name] = f.Index
+			}
+		}
+		for name, index := range found {
 			if _, taken := names[name]; !taken {
-				names[name] = f.Index
+				names[name] = index
 			}
 		}
 	}
@@ -240,17 +249,30 @@ func digFieldsOf(t reflect.Type) map[string][]int {
 func digConvert[T any](src reflect.Value) (T, bool) {
 	var zero T
 	want := reflect.TypeFor[T]()
-	// Asked for the pointer itself: return it before following it. A nil
-	// pointer is still a miss.
-	if src.IsValid() && src.Kind() == reflect.Pointer && src.Type() == want && !src.IsNil() {
-		return reflect.TypeAssert[T](src)
+	// Follow pointers one at a time, stopping at the first value that is a
+	// T. Checking before each step matters twice over: the pointer itself
+	// may be what was asked for, and an interface may be implemented by the
+	// pointer and not by what it points to. A nil on the way is a miss.
+	for {
+		if !src.IsValid() {
+			return zero, false
+		}
+		nilable := src.Kind() == reflect.Pointer || src.Kind() == reflect.Interface
+		if nilable && src.IsNil() {
+			return zero, false
+		}
+		if src.Kind() != reflect.Interface {
+			if t := src.Type(); t == want || (want.Kind() == reflect.Interface && t.Implements(want)) {
+				return reflect.TypeAssert[T](src)
+			}
+		}
+		if !nilable {
+			break
+		}
+		src = src.Elem()
 	}
-	src, ok := digDeref(src)
-	if !ok {
+	if want.Kind() == reflect.Interface {
 		return zero, false
-	}
-	if src.Type() == want || want.Kind() == reflect.Interface {
-		return reflect.TypeAssert[T](src)
 	}
 	out := reflect.New(want).Elem()
 	const exact = 1 << 53 // every integer up to here is a float64
