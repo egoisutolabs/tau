@@ -221,6 +221,30 @@ driver's types about three times faster.
 
 A whole `float64` converts to any integer type asked for.
 
+## Converting structs
+
+```go
+func Convert[To any](from any) To // throws *ConvertError
+
+type ConvertError struct {
+    From, To reflect.Type
+    Field    string // destination path, e.g. "Items[].Price"
+    Err      error
+}
+```
+
+A destination field takes the source field with the same Go name, else the
+same json name. Every exported destination field needs a source, or a tag:
+`tau:"Customer.Email"` (a path of source Go field names) or `tau:"-"` (set
+by the caller afterwards). Extra source fields are ignored.
+
+Converts: nested structs, slices, maps, pointers (nil stays nil), named
+types to their basic kind, numbers that widen, a type with `MarshalText`
+(`time.Time`, IDs) to `string`, and a string into a type with
+`UnmarshalText`. Refuses everything else, including narrowing numbers, and
+map keys that would collide after conversion.
+Also works at the top level: `tau.Convert[[]View](rows)`.
+
 ## Ordered map and set
 
 ```go

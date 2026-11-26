@@ -192,6 +192,22 @@ cfg := tau.ParseJSON[Config](data)         // bytes already in hand
   into a struct instead. In a program that reads MongoDB documents with
   `Dig`, add `import _ "github.com/egoisutolabs/tau/taubson"` once.
 
+## Converting structs
+
+- To build a response from a row (or any struct from another), use
+  `tau.Convert[Response](row)` instead of a field-by-field mapper, then set
+  computed fields yourself. It works on slices: `tau.Convert[[]Response](rows)`.
+- Every destination field must match a source field by Go name or json
+  name. For the rest, tag the destination field: `tau:"Customer.Email"` to
+  read a nested or renamed source field, `tau:"-"` for a field you compute.
+  A missing match throws `*tau.ConvertError` naming the field; it does not
+  leave the field empty.
+- The mapping is checked when the code runs, not by the compiler. **Add a
+  test that calls each conversion once**; an empty value is enough, since
+  the check depends only on the types.
+- Do not use it in a loop over thousands of rows (it costs about 1 µs per
+  response by reflection); write that mapper by hand.
+
 ## Small helpers
 
 - `tau.Ptr(v)`, `tau.Deref(p, fallback)` for optional fields.

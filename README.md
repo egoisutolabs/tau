@@ -61,6 +61,9 @@ func Summary(ctx context.Context, body []byte) (total int, err error) {
   recognises a bad request with a single check. `Field[T]` tells an omitted
   key from an explicit `null`, for PATCH requests. `Dig` reads untyped
   JSON, MongoDB documents and structs without a chain of type assertions.
+- **Struct conversion.** `Convert[Response](row)` builds one struct from
+  another by matching fields, and throws if a field has nothing to match,
+  so a renamed field cannot silently come out empty.
 - **Ordered map and set.** `OrderedMap` and `Set` keep insertion order,
   like their JavaScript namesakes.
 - **One import.** tau wraps [`samber/lo`](https://github.com/samber/lo) and
@@ -101,6 +104,7 @@ every function.
 | [Concurrency](docs/concurrency.md) | Promises, async functions, task groups, retry policies, batches, the cancellation model |
 | [Lists](docs/lists.md) | Chaining, grouping, what stays a function |
 | [JSON and validation](docs/json-and-validation.md) | Strict parsing, size-limited reading, the input error type, validation tags, PATCH fields, untyped JSON, MongoDB documents |
+| [Converting structs](docs/converting-structs.md) | `Convert`: field matching, tags, what converts, errors, cost |
 | [Ordered map and set](docs/collections.md) | `OrderedMap` and `Set` |
 | [Coming from Node.js](docs/coming-from-node.md) | The mapping from JavaScript idioms, and where Go differs |
 

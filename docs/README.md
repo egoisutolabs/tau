@@ -21,6 +21,8 @@ pieces fit together.
 - [Lists](lists.md): chaining, grouping, and what stays a function.
 - [JSON and validation](json-and-validation.md): strict parsing,
   validation tags, error reporting, reading untyped JSON.
+- [Converting structs](converting-structs.md): one struct type into
+  another by matching fields, and what it refuses.
 - [Ordered map and set](collections.md)
 - [Coming from Node.js](coming-from-node.md): the mapping from JavaScript
   idioms to tau, and the places where Go differs.
