@@ -269,3 +269,57 @@ func BenchmarkDigStruct(b *testing.B) {
 		}
 	}
 }
+
+type digDeepName struct {
+	Name string `json:"name" bson:"n"`
+}
+
+// The embedded field is declared first, so a rule of "first seen wins"
+// would pick it over the direct field.
+type digShadowed struct {
+	digDeepName
+	Direct string `json:"name"`
+	Short  string `bson:"n"`
+}
+
+func TestDigShallowestFieldWinsATagName(t *testing.T) {
+	v := digShadowed{digDeepName{"nested"}, "direct", "short"}
+	expectDig(t, "json name", v, "direct", true, "name")
+	expectDig(t, "bson name", v, "short", true, "n")
+	expectDig(t, "the embedded field by its Go name", v, "nested", true, "Name")
+}
+
+type digPtrErr struct{ msg string }
+
+func (e *digPtrErr) Error() string { return e.msg }
+
+// An interface satisfied only by the pointer must be found the same way in
+// a struct field as in a map[string]any.
+func TestDigInterfaceImplementedByAPointer(t *testing.T) {
+	e := &digPtrErr{"boom"}
+	type holder struct {
+		Err   *digPtrErr
+		Typed map[string]*digPtrErr
+		None  *digPtrErr
+	}
+	h := holder{Err: e, Typed: map[string]*digPtrErr{"k": e}}
+	for label, got := range map[string]func() (error, bool){
+		"map[string]any": func() (error, bool) { return Dig[error](map[string]any{"Err": e}, "Err") },
+		"struct field":   func() (error, bool) { return Dig[error](h, "Err") },
+		"typed map":      func() (error, bool) { return Dig[error](h, "Typed", "k") },
+		"named document": func() (error, bool) { return Dig[error](digDoc{"Err": e}, "Err") },
+	} {
+		if err, ok := got(); !ok || err != error(e) {
+			t.Errorf("%s: got (%v, %v), want the pointer itself", label, err, ok)
+		}
+	}
+	if _, ok := Dig[error](h, "None"); ok {
+		t.Error("a nil pointer was returned as an error")
+	}
+	if v, ok := Dig[any](h, "Err"); !ok || v != any(e) {
+		t.Errorf("Dig[any] on a pointer field: got (%v, %v), want the pointer", v, ok)
+	}
+	if v, ok := Dig[digPtrErr](h, "Err"); !ok || v.msg != "boom" {
+		t.Errorf("the value behind the pointer: got (%v, %v)", v, ok)
+	}
+}
