@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-26
+
 ### Added
 
 - `Dig` and `DigOr` now read MongoDB documents (`bson.M`, `bson.A`,
@@ -18,7 +20,6 @@ uses [Semantic Versioning](https://semver.org/).
   (`import _ "github.com/egoisutolabs/tau/taubson"`) makes `Dig` on the v2
   driver's types as fast as on decoded JSON. Only programs that import it
   compile in the driver's `bson` package.
-
 - `Convert`, which builds a value of one struct type from another by
   matching fields by Go name or json name, with `tau:"Path.To.Field"` and
   `tau:"-"` tags for the rest. A destination field with no source is
